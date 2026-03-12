@@ -1,0 +1,162 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage[margin=1in]{geometry}
+
+\title{Homework 2: Maximum Entropy Inverse Reinforcement Learning}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{Question 1: Learning rate selection}
+
+I tested five fixed learning rates with the same setup: 25 epochs, horizon 15, and zero seed weights. I compared (i) how quickly the gradient norm dropped and (ii) the final learned weights.
+
+\begin{table}[h]
+\centering
+\caption{Learning-rate sweep results from \texttt{out.txt}.}
+\begin{tabular}{cccc}
+\toprule
+Learning rate & Grad. norm (epoch 1) & Grad. norm (epoch 25) & Final weights $\theta$ \\
+\midrule
+0.01 & 6.1145 & 5.5230 & $[-1.016, -0.957, -0.276, 0.250]$ \\
+0.05 & 6.1145 & 0.9606 & $[-1.737, -2.471, -1.159, 0.463]$ \\
+0.10 & 6.1145 & 0.6697 & $[-1.750, -3.324, -1.687, 0.509]$ \\
+0.50 & 6.1145 & 1.1410 & $[-2.417, -7.166, -3.535, 1.078]$ \\
+1.00 & 6.1145 & 1.2106 & $[-3.439, -11.707, -5.738, 3.233]$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Figure~\ref{fig:q1_grad_norm} confirms this behavior across all epochs.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.75\textwidth]{plots/gradient_norms_curves.png}
+\caption{Gradient norm vs epoch for different learning rates.}
+\label{fig:q1_grad_norm}
+\end{figure}
+
+\textbf{Chosen learning rate:} I use \textbf{0.1}. It gives the best balance in my runs. It converges much faster than 0.01, ends with the smallest gradient norm among the tested values, and avoids the very large-magnitude weights seen for 0.5 and 1.0.
+
+\section*{Question 2: Reward function after 100 epochs (horizon 15)}
+
+I ran MaxEntIRL for 100 epochs with horizon 15 using learning rate 0.1. The learned reward surface is shown in Figure~\ref{fig:q2_surface}, and the same values are shown as a heatmap in Figure~\ref{fig:q2_heatmap}.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.72\textwidth]{plots/reward_100ep_lr0.1.png}
+\caption{Learned reward surface for 100 epochs, horizon 15, lr=0.1.}
+\label{fig:q2_surface}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.58\textwidth]{plots/reward_100ep_lr0.1_heatmap.png}
+\caption{Learned reward heatmap (state values).}
+\label{fig:q2_heatmap}
+\end{figure}
+
+From the run output and reward grid:
+\begin{itemize}
+  \item Most baseline states are around $-1.98$.
+  \item States 6--9 are strongly negative (about $-6.27$).
+  \item State 12 has reward $-3.14$.
+  \item Goal state 24 is positive (about $0.66$).
+\end{itemize}
+
+So the model is clearly trying to make goal-reaching trajectories likely while discouraging certain regions of the grid. A compact ordering is:
+\[
+\text{state 24 (goal)} > \text{baseline states} > \text{state 12} > \text{states 6--9}.
+\]
+
+\textbf{State 12 discussion:} In the demos, state 12 is never visited, so assigning it a negative reward is reasonable from the learner's perspective. It helps reduce visitation to that state and match observed behavior. However, this could still be wrong relative to the unknown ground-truth reward. If the expert simply did not pass through 12 by chance, the learned model may over-penalize it.
+
+\section*{Question 3: Simplified gradient derivation}
+
+The MaxEnt trajectory model is
+\[
+P(\zeta\mid\theta) = \frac{\exp(\theta^\top f_\zeta)}{Z(\theta)},
+\qquad
+Z(\theta) = \sum_{\zeta'} \exp(\theta^\top f_{\zeta'}).
+\]
+
+The loss is average log-likelihood of demonstrations:
+\[
+L(\theta) = \frac{1}{m}\sum_{i=1}^m \log P(\zeta_i\mid\theta).
+\]
+
+For one trajectory:
+\[
+\log P(\zeta\mid\theta)=\theta^\top f_\zeta - \log Z(\theta).
+\]
+Differentiate:
+\[
+\nabla_\theta (\theta^\top f_\zeta)=f_\zeta,
+\]
+\[
+\nabla_\theta \log Z(\theta)
+=\frac{1}{Z(\theta)}\nabla_\theta Z(\theta)
+=\frac{1}{Z(\theta)}\sum_{\zeta'} f_{\zeta'}\exp(\theta^\top f_{\zeta'})
+=\sum_{\zeta'} P(\zeta'\mid\theta)f_{\zeta'}.
+\]
+So,
+\[
+\nabla_\theta \log P(\zeta\mid\theta)
+=f_\zeta-\sum_{\zeta'} P(\zeta'\mid\theta)f_{\zeta'}.
+\]
+Averaging over demos gives
+\[
+\mathbf{\nabla L(\theta)=\tilde f-\sum_{\zeta}P(\zeta\mid\theta)f_\zeta,}
+\]
+which is the same form as Equation (6): empirical feature counts minus model expected feature counts.
+
+As a sanity check, Figure~\ref{fig:q3_feature_curves} shows model expected feature counts over epochs against empirical counts.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.75\textwidth]{plots/feature_curves_100ep_lr0.1.png}
+\caption{Expected feature counts per epoch (solid) and empirical counts (dashed).}
+\label{fig:q3_feature_curves}
+\end{figure}
+
+\section*{Question 4: Equation 5 vs Equation 7}
+
+Equation 5 (MaxEnt trajectory view) effectively assigns probability at the \emph{trajectory} level. If two full paths have the same total return, they receive the same probability mass.
+
+Equation 7 (action-based model) assigns probabilities from local action scores like $\exp(Q^*(s,a))$. This can give different probabilities to two full trajectories even when their total return is the same, because local action preferences can differ along the two routes.
+
+\textbf{Why Equation 7 is problematic:} It can overemphasize one specific action sequence and underweight other equally good paths. That adds bias toward local greedy choices, while MaxEnt is supposed to remain as unbiased as possible among equal-return behaviors.
+
+\section*{Question 5: Meaning of $Z_{a_{ij}}$ and $Z_{s_i}$}
+
+Over a fixed horizon:
+\begin{itemize}
+  \item $Z_{a_{ij}}$: total exponentiated return mass of all trajectories that start from state $s_i$ by taking action $a_{ij}$ first.
+  \item $Z_{s_i}$: total exponentiated return mass of all trajectories starting at state $s_i$ (sum over outgoing actions, plus terminal handling).
+\end{itemize}
+
+So $Z_{a_{ij}}$ is an action-conditioned partition term, and $Z_{s_i}$ is the state-level partition term. The policy uses their ratio:
+\[
+\pi(a_{ij}\mid s_i)=\frac{Z_{a_{ij}}}{Z_{s_i}}.
+\]
+
+Figure~\ref{fig:q5_zs} plots $Z_s$ values across states for horizon 15.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.75\textwidth]{plots/Z_s_bars.png}
+\caption{$Z_s$ across states (horizon 15).}
+\label{fig:q5_zs}
+\end{figure}
+
+\section*{Question 6: Why is 1 added to $Z_s$ for terminal states?}
+
+At a terminal state there are no outgoing actions. The only possible continuation is to stop. In partition-function terms, that contributes one valid terminal trajectory with unit weight, so the base case is set to 1.
+
+This is necessary for the backward recursion: if terminal states had $Z_s=0$, values would collapse backward through predecessors. Setting terminal $Z_s=1$ correctly anchors the dynamic program.
+
+\end{document}
